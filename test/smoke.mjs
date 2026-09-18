@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs"
 import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules } from "../dist/events.js"
 import { resolveBinary, toWindowsPath, isWSL } from "../dist/toast.js"
 
@@ -71,7 +72,26 @@ check("binary resolved", bin !== undefined, true)
 check("binary from package", bin?.source, "package")
 check("binary is executable path", bin?.linuxPath.endsWith("ntfytoast.exe"), true)
 check("binary has windows form", bin?.windowsPath.endsWith("ntfytoast.exe"), true)
-check("isWSL detects true in this WSL env", isWSL(), true)
+// isWSL() must reflect the actual host: true under WSL, false on a plain Linux
+// runner such as GitHub Actions. Assert agreement with the environment rather
+// than a fixed value so the suite passes on both.
+//
+// On a plain Linux runner isWSL() also inspects /proc/version, so derive the
+// expectation the same way the implementation does.
+let envSaysWSL = Boolean(process.env.WSL_DISTRO_NAME || process.env.WSL_INTEROP)
+if (!envSaysWSL) {
+  try {
+    const v = readFileSync("/proc/version", "utf8")
+    envSaysWSL = /microsoft|wsl/i.test(v)
+  } catch {
+    envSaysWSL = false
+  }
+}
+check(
+  `isWSL matches host (detected=${isWSL()}, host=${envSaysWSL ? "WSL" : "plain Linux"})`,
+  isWSL(),
+  envSaysWSL,
+)
 
 console.log(failed === 0 ? "\nAll checks passed." : `\n${failed} check(s) failed.`)
 process.exit(failed === 0 ? 0 : 1)
