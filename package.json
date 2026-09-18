@@ -35,6 +35,14 @@
     "snoretoast"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cardin/opencode-wsl-notify.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cardin/opencode-wsl-notify/issues"
+  },
+  "homepage": "https://github.com/cardin/opencode-wsl-notify#readme",
   "dependencies": {
     "toasted-notifier": "^10.1.0"
   },

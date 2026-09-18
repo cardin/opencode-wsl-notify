@@ -1,25 +1,46 @@
 name: publish
 
+# Publishes on a published GitHub release using npm trusted publishing (OIDC).
+#
+# No NPM_TOKEN secret is needed: GitHub mints a short-lived OIDC token that npm
+# exchanges for a publish credential. This also works with accounts that require
+# 2FA for writes, which long-lived tokens cannot satisfy.
+#
+# Before this workflow can publish, configure a trusted publisher for the package
+# on npmjs.com -> Packages -> opencode-wsl-notify -> Settings -> Trusted publishing:
+#
+#   Organization or user: cardin
+#   Repository:           opencode-wsl-notify
+#   Workflow filename:    publish.yml
+#   Allowed actions:      npm publish
+#
+# The package `repository.url` must match this repository exactly.
+
 on:
   release:
     types: [published]
 
+permissions:
+  contents: read
+  id-token: write # required for OIDC
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      id-token: write
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Trusted publishing requires Node >= 22.14.0 and npm CLI >= 11.5.1.
+          node-version: "24"
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
-      - run: npm install --no-audit --no-fund
+      - run: npm ci
       - run: npm test
-      - run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      # Provenance is generated automatically with trusted publishing, so no
+      # --provenance flag is needed. No NODE_AUTH_TOKEN is set, which ensures the
+      # publish actually goes through OIDC rather than falling back to a token.
+      - run: npm publish --access public
