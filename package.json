@@ -1,6 +1,6 @@
 {
   "name": "opencode-wsl-notify",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Windows toast notifications for OpenCode (V2) running inside WSL. No Windows-side setup required.",
   "type": "module",
   "main": "./dist/index.js",
