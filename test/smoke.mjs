@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules } from "../dist/events.js"
+import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules, projectLabel, sessionLabel, sessionParentOf, sessionProjectOf, sessionLocationOf, beginTurn, claimCompletion, eventLocationOf, matchesLocation } from "../dist/events.js"
 import { resolveBinary, toWindowsPath, isWSL } from "../dist/toast.js"
 
 let failed = 0
@@ -47,10 +47,72 @@ check("missing type ignored", classifyEvent({ data: {} }), undefined)
 check("v1 properties fallback", sessionIDOf({ type: "session.idle", properties: { sessionID: "old" } }), "old")
 check("v2 data preferred", sessionIDOf({ type: "session.idle", data: { sessionID: "new" } }), "new")
 
+// --- Project / session labels ---
+check("project label uses folder name", projectLabel({ id: "cd7149d1", canonical: "/home/me/opencode-wsl-notify", directory: "/home/me/opencode-wsl-notify" }), "opencode-wsl-notify")
+check("project label falls back to directory", projectLabel({ id: "cd7149d1", directory: "/home/me/myapp" }), "myapp")
+check("project label handles windows paths", projectLabel({ id: "cd7149d1", canonical: "C:\\Users\\me\\myapp" }), "myapp")
+check("project label trims trailing slash", projectLabel({ id: "cd7149d1", canonical: "/home/me/myapp/" }), "myapp")
+check("project label falls back to id", projectLabel({ id: "cd7149d1" }), "cd7149d1")
+check("project label uses extra directory", projectLabel({ id: "cd7149d1" }, "/home/me/myapp"), "myapp")
+check("project label prefers project path", projectLabel({ id: "cd7149d1", canonical: "/home/me/real" }, "/home/me/fallback"), "real")
+check("project label without project", projectLabel(undefined), undefined)
+
+check("session parent read", sessionParentOf({ type: "session.created", data: { sessionID: "child", parentID: "parent" } }), "parent")
+check("session parent ignores self", sessionParentOf({ type: "session.created", data: { sessionID: "s1", parentID: "s1" } }), undefined)
+check("session parent absent", sessionParentOf({ type: "session.idle", data: { sessionID: "s1" } }), undefined)
+check("session parent legacy key", sessionParentOf({ type: "session.created", data: { sessionID: "child", parentSessionID: "parent" } }), "parent")
+
+// --- Session payload owner fields ---
+check("session project read", sessionProjectOf({ type: "session.created", data: { sessionID: "s1", projectID: "p1" } }), "p1")
+check("session project absent", sessionProjectOf({ type: "session.idle", data: { sessionID: "s1" } }), undefined)
+check("session location read", sessionLocationOf({ type: "session.created", data: { sessionID: "s1", location: { directory: "/home/me/app" } } }), "/home/me/app")
+check("session location absent", sessionLocationOf({ type: "session.created", data: { sessionID: "s1" } }), undefined)
+
+// --- Location scoping (events are broadcast to every project) ---
+check("event location read", eventLocationOf({ type: "permission.asked", location: { directory: "/home/me/app" }, data: {} }), "/home/me/app")
+check("event location absent", eventLocationOf({ type: "session.idle", data: {} }), undefined)
+check("same location matches", matchesLocation({ type: "session.idle", location: { directory: "/home/me/app" }, data: {} }, "/home/me/app"), true)
+check("other location rejected", matchesLocation({ type: "session.idle", location: { directory: "/home/me/other" }, data: {} }, "/home/me/app"), false)
+check("missing event location allowed", matchesLocation({ type: "session.idle", data: {} }, "/home/me/app"), true)
+check("unknown plugin location allows all", matchesLocation({ type: "session.idle", location: { directory: "/home/me/other" }, data: {} }, undefined), true)
+
+// --- Completion coalescing (one toast per finished execution) ---
+{
+  const turns = new Map()
+  beginTurn(turns, "s1", 1000)
+  check("first completion claimed", claimCompletion(turns, "s1"), { claimed: true, startedAt: 1000 })
+  check("paired completion skipped", claimCompletion(turns, "s1"), { claimed: false, startedAt: 1000 })
+
+  beginTurn(turns, "s1", 2000)
+  check("new turn claimed again", claimCompletion(turns, "s1"), { claimed: true, startedAt: 2000 })
+
+  // A completion with no observed start still fires exactly once.
+  check("orphan completion claimed", claimCompletion(turns, "s2"), { claimed: true, startedAt: undefined })
+  check("orphan completion coalesced", claimCompletion(turns, "s2"), { claimed: false, startedAt: undefined })
+
+  // Sessions are independent.
+  check("other session unaffected", claimCompletion(turns, "s3"), { claimed: true, startedAt: undefined })
+}
+
+check("session label prefers title", sessionLabel("Fix login", "ses_f4c8aaaa"), "Fix login")
+check("session label trims title", sessionLabel("  Fix login  ", "ses_f4c8aaaa"), "Fix login")
+check("session label falls back to short id", sessionLabel(undefined, "ses_f4c8aaaa"), "ses_f4c8")
+check("session label ignores blank title", sessionLabel("   ", "ses_f4c8aaaa"), "ses_f4c8")
+check("session label without session", sessionLabel(undefined, undefined), undefined)
+
+// --- Default titles name the event; body carries project/session ---
+check("complete title", defaultRules.complete.title, "Session complete")
+check("error title", defaultRules.error.title, "Session error")
+check("permission title", defaultRules.permission.title, "Waiting for permission")
+check("subagent title", defaultRules.subagent_complete.title, "Subagent finished")
+check("permission message names session", defaultRules.permission.message, "{project} — {session}")
+check("subagent message omits session", defaultRules.subagent_complete.message, "{project}")
+check("subagent disabled by default", defaultRules.subagent_complete.enabled, false)
+
 // --- Rendering / placeholder cleanup ---
-check("project + session placeholders", renderMessage(defaultRules.complete.message, { project: "myapp", session: "Fix login" }), "Session complete — myapp — Fix login")
-check("empty placeholders trim separators", renderMessage(defaultRules.complete.message, {}), "Session complete")
-check("only project present", renderMessage(defaultRules.complete.message, { project: "myapp" }), "Session complete — myapp")
+check("project + session placeholders", renderMessage(defaultRules.complete.message, { project: "myapp", session: "Fix login" }), "myapp — Fix login")
+check("empty placeholders render empty", renderMessage(defaultRules.complete.message, {}), "")
+check("only project present", renderMessage(defaultRules.complete.message, { project: "myapp" }), "myapp")
 check("empty session trims dash", renderMessage("Done - {session}", {}), "Done")
 
 // --- Runtime self-healing of the execute bit ---

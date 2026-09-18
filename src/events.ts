@@ -29,23 +29,23 @@ export type EventRules = Record<EventKind, EventRule>
 export const defaultRules: EventRules = {
   complete: {
     enabled: true,
-    title: "OpenCode",
-    message: "Session complete — {project} — {session}",
+    title: "Session complete",
+    message: "{project} — {session}",
   },
   error: {
     enabled: true,
-    title: "OpenCode",
-    message: "Session error — {project} — {session}",
+    title: "Session error",
+    message: "{project} — {session}",
   },
   permission: {
     enabled: true,
-    title: "OpenCode",
-    message: "Waiting for permission — {project}",
+    title: "Waiting for permission",
+    message: "{project} — {session}",
   },
   subagent_complete: {
     enabled: false,
-    title: "OpenCode",
-    message: "Subagent finished — {project}",
+    title: "Subagent finished",
+    message: "{project}",
   },
 }
 
@@ -64,6 +64,7 @@ interface EventLike {
   type?: unknown
   data?: Record<string, unknown>
   properties?: Record<string, unknown>
+  location?: Record<string, unknown>
 }
 
 function readEvent(event: unknown): EventLike | undefined {
@@ -103,6 +104,54 @@ export function announcesTitle(event: unknown): boolean {
   const record = readEvent(event)
   if (!record) return false
   return record.type === SESSION_RENAMED || record.type === SESSION_CREATED
+}
+
+/** Parent session id when the event names one (`session.created`). */
+export function sessionParentOf(event: unknown): string | undefined {
+  const record = readEvent(event)
+  if (!record) return undefined
+  const data = payload(record)
+  const parent = data.parentID ?? data.parentSessionID
+  if (typeof parent !== "string" || parent === "") return undefined
+  const self = data.sessionID
+  return self === parent ? undefined : parent
+}
+
+/** Project id carried in an event payload (`session.created`, `session.moved`). */
+export function sessionProjectOf(event: unknown): string | undefined {
+  const record = readEvent(event)
+  if (!record) return undefined
+  const projectID = payload(record).projectID
+  return typeof projectID === "string" && projectID !== "" ? projectID : undefined
+}
+
+/** Location directory carried in an event payload (`session.created`, `session.moved`). */
+export function sessionLocationOf(event: unknown): string | undefined {
+  const record = readEvent(event)
+  if (!record) return undefined
+  const location = payload(record).location
+  if (!location || typeof location !== "object") return undefined
+  const directory = (location as { directory?: unknown }).directory
+  return typeof directory === "string" && directory !== "" ? directory : undefined
+}
+
+/** Location directory carried on the event envelope, when present. */
+export function eventLocationOf(event: unknown): string | undefined {
+  const directory = readEvent(event)?.location?.directory
+  return typeof directory === "string" && directory !== "" ? directory : undefined
+}
+
+/**
+ * Whether an event belongs to the plugin's own location.
+ *
+ * OpenCode delivers events to every location in the instance, so a plugin
+ * loaded once per project would otherwise toast N times, once per project.
+ * Events without a location stay eligible for compatibility.
+ */
+export function matchesLocation(event: unknown, directory?: string): boolean {
+  if (!directory) return true
+  const eventDirectory = eventLocationOf(event)
+  return eventDirectory === undefined || eventDirectory === directory
 }
 
 /** A subagent session reports a parent that differs from its own id. */
@@ -154,6 +203,76 @@ export function classifyEvent(event: unknown): Classified | undefined {
     default:
       return undefined
   }
+}
+
+/** Last path segment, tolerant of both POSIX and Windows separators. */
+function lastPathSegment(value: string): string {
+  const trimmed = value.replace(/[\\/]+$/, "")
+  const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"))
+  return index >= 0 ? trimmed.slice(index + 1) : trimmed
+}
+
+export interface ProjectLike {
+  id?: string
+  directory?: string
+  canonical?: string
+}
+
+/**
+ * Human-readable project label.
+ *
+ * `ctx.location.project.id` is an opaque hash, so prefer the folder name of the
+ * project root and only fall back to the raw id when no usable directory is known.
+ */
+export function projectLabel(project?: ProjectLike, directory?: string): string | undefined {
+  const candidates = [project?.canonical, project?.directory, directory]
+
+  for (const candidate of candidates) {
+    if (typeof candidate !== "string") continue
+    const name = lastPathSegment(candidate.trim())
+    if (name !== "") return name
+  }
+
+  return typeof project?.id === "string" && project.id !== "" ? project.id : undefined
+}
+
+/**
+ * Session label: the title when known, otherwise a short id so the toast still
+ * identifies which session it refers to.
+ */
+export function sessionLabel(title: string | undefined, sessionID: string | undefined): string | undefined {
+  const trimmed = title?.trim()
+  if (trimmed) return trimmed
+  return sessionID ? sessionID.slice(0, 8) : undefined
+}
+
+/** Per-session bookkeeping that coalesces one execution into one notification. */
+export interface TurnState {
+  startedAt?: number
+  notified: boolean
+}
+
+/** Begin a new execution for a session, resetting per-turn dedupe state. */
+export function beginTurn(turns: Map<string, TurnState>, key: string, now: number = Date.now()): void {
+  turns.set(key, { startedAt: now, notified: false })
+}
+
+/**
+ * Claim the completion of an execution.
+ *
+ * Returns `claimed: false` when this execution has already produced a
+ * notification, which coalesces the paired `session.execution.succeeded` and
+ * deprecated `session.idle` events (and replayed events) into a single toast.
+ */
+export function claimCompletion(
+  turns: Map<string, TurnState>,
+  key: string,
+): { claimed: boolean; startedAt?: number } {
+  const turn = turns.get(key)
+  if (turn?.notified) return { claimed: false, startedAt: turn.startedAt }
+
+  turns.set(key, { startedAt: turn?.startedAt, notified: true })
+  return { claimed: true, startedAt: turn?.startedAt }
 }
 
 export interface RenderContext {

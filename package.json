@@ -21,6 +21,7 @@
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "npm run build && node test/smoke.mjs",
+    "verify": "npm run build && node test/verify.mjs",
     "prepublishOnly": "npm run build"
   },
   "keywords": [

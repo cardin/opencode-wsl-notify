@@ -58,10 +58,10 @@ Options are passed through the object form of a plugin entry:
       "options": {
         "debug": true,
         "minDuration": 5,
-        "appID": "OpenCode-WSL-Notify",
+        "appID": "OpenCode",
         "events": {
           "subagent_complete": { "enabled": true },
-          "complete": { "message": "Done — {project}" }
+          "complete": { "message": "{project}" }
         }
       }
     }
@@ -72,7 +72,7 @@ Options are passed through the object form of a plugin entry:
 | Option | Type | Default | Description |
 | --- | --- | --- | --- |
 | `executablePath` | string | auto | Explicit path to `ntfytoast.exe`. Linux (`/mnt/c/...`) or Windows (`C:\...`) form. |
-| `appID` | string | `OpenCode-WSL-Notify` | Application id shown above the toast. |
+| `appID` | string | `OpenCode` | Application name shown above the toast. |
 | `wslOnly` | boolean | `true` | Only notify when running inside WSL. Set `false` to force on other platforms. |
 | `events` | object | see below | Per-event `enabled`, `title`, and `message`. |
 | `minDuration` | number | `0` | Skip `complete` notifications for sessions shorter than this many seconds. |
@@ -87,32 +87,32 @@ Options are passed through the object form of a plugin entry:
 | `permission` | on | `permission.asked` |
 | `subagent_complete` | off | a subagent session finishing |
 
-Default messages:
+The toast title names the event; the body carries the project and session:
 
-| Event | Message |
-| --- | --- |
-| `complete` | `Session complete — {project} — {session}` |
-| `error` | `Session error — {project} — {session}` |
-| `permission` | `Waiting for permission — {project}` |
-| `subagent_complete` | `Subagent finished — {project}` |
+| Event | Title | Message |
+| --- | --- | --- |
+| `complete` | `Session complete` | `{project} — {session}` |
+| `error` | `Session error` | `{project} — {session}` |
+| `permission` | `Waiting for permission` | `{project} — {session}` |
+| `subagent_complete` | `Subagent finished` | `{project}` |
 
 ### Message placeholders
 
 | Placeholder | Resolves to |
 | --- | --- |
-| `{project}` | Project id (folder name) from the plugin location |
-| `{session}` | Session title, or the first 8 characters of the session id if the title is not yet known |
+| `{project}` | Project folder name, taken from the project root directory. Falls back to the project id when no directory is known. |
+| `{session}` | Session title, read from the session record when the notification fires. Falls back to the first 8 characters of the session id when the session has no title. |
 
-Titles are learned from `session.created` and `session.renamed`, so the first
-notification for a session may show an id before the title is generated.
+Titles are captured from `session.created` and `session.renamed`, and refreshed
+from the session record when a notification fires, so a toast names the session
+even when the title is generated after the plugin subscribes.
 
 Placeholders that resolve to empty are removed along with their trailing
-separator, so `"Session complete — {project} — {session}"` degrades cleanly to
-`"Session complete — myapp"` or just `"Session complete"`. To drop a placeholder
-entirely, remove it from the message:
+separator, so `"{project} — {session}"` degrades cleanly to just the project. To
+drop a placeholder entirely, remove it from the message:
 
 ```jsonc
-{ "events": { "complete": { "message": "Done — {project}" } } }
+{ "events": { "complete": { "message": "{project}" } } }
 ```
 
 ---
@@ -123,6 +123,12 @@ entirely, remove it from the message:
 2. The plugin resolves the bundled `ntfytoast.exe` from the `toasted-notifier` dependency.
 3. It subscribes to `ctx.event.subscribe()`.
 4. Matching events map to toasts, which run as a Windows process from WSL.
+
+OpenCode delivers every event to every project's plugin instance, and the plugin
+is loaded once per project. Notification events carry no location field, so the
+plugin resolves each event's owning project from its session and ignores events
+that are not its own. One event therefore produces one toast rather than one per
+open project.
 
 The plugin is deliberately inert outside WSL, since native Linux has a real notification daemon and OpenCode's built-in [`attention`](https://opencode.ai/v2/docs/cli/config) settings cover it. On Windows 11 with WSLg, try the built-in `attention.notifications` setting first — it may already do what you need.
 
@@ -158,7 +164,19 @@ No. The plugin makes the binary executable at runtime, because OpenCode's Bun-ba
 installer blocks `postinstall` scripts and npm does not reliably preserve the
 execute bit from WSL. There is no manual permission step.
 
-**Toasts show "NtfyToast" instead of "OpenCode-WSL-Notify".**
+**Duplicate toasts.**
+
+A finished turn can surface as more than one event (`session.execution.succeeded`
+and the deprecated `session.idle`), and a reconnecting event stream can replay
+durable events. The plugin coalesces completions per execution, so one finished
+turn produces one toast. Subagent sessions are detected from their session
+record's `parentID`, so they do not toast as top-level sessions while
+`subagent_complete` is disabled.
+
+Set `debug: true` to log which events are dispatched and which duplicates are
+skipped.
+
+**Toasts show "NtfyToast" instead of "OpenCode".**
 
 The `appID` is passed through to the toast binary, but Windows only honors an application name for an appID that is **registered** on the system. Without registration the label falls back to the toast vendor's name.
 
@@ -166,9 +184,9 @@ To make the branding stick, register a Start Menu shortcut once:
 
 ```sh
 node_modules/toasted-notifier/vendor/ntfyToast/ntfytoast.exe \
-  -install "OpenCode-WSL-Notify\OpenCode-WSL-Notify.lnk" \
+  -install "OpenCode\OpenCode.lnk" \
   "C:\Windows\System32\cmd.exe" \
-  "OpenCode-WSL-Notify"
+  "OpenCode"
 ```
 
 Then the default `appID` resolves to a registered name. Set a custom `appID` if you registered a different one.
@@ -184,11 +202,14 @@ V2 emits `session.execution.failed`, which this plugin handles. If you are on a 
 ```sh
 npm install
 npm run build        # tsc -> dist/
-npm test             # smoke tests for path/event/render logic
+npm test             # unit tests: path/event/render/dedupe logic
+npm run verify       # end-to-end: real setup() against a fake toast binary
 npm run typecheck
 ```
 
-The smoke tests cover Windows path translation, event classification against real V2 event shapes, placeholder rendering, and binary resolution.
+The unit tests cover Windows path translation, event classification against real
+V2 event shapes, placeholder rendering, and completion coalescing. The
+end-to-end check exercises the real `setup()` and asserts on the toasts produced.
 
 ---
 
