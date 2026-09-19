@@ -89,7 +89,7 @@ export default {
     if (!notifier.available) {
       log(
         "Could not locate ntfytoast.exe; notifications are disabled. " +
-          "Reinstall the package (postinstall fixes permissions) or set `executablePath`.",
+          "Check the package install or set `executablePath`.",
       )
       return
     }
