@@ -57,21 +57,27 @@ function toasts() {
     })
 }
 
-/** An event stream the test can push into, matching `ctx.event.subscribe()`. */
+/** An event stream the test can push into, matching `ctx.event.subscribe()`.
+ *  Events are broadcast to every subscriber, like OpenCode's event bus. */
 function createStream() {
-  const buffer = []
-  let waiter
+  const subscribers = new Set()
   return {
     push(event) {
-      if (waiter) {
-        const resolve = waiter
-        waiter = undefined
-        resolve(event)
-        return
-      }
-      buffer.push(event)
+      for (const subscriber of subscribers) subscriber(event)
     },
     subscribe() {
+      const buffer = []
+      let waiter
+      const subscriber = (event) => {
+        if (waiter) {
+          const resolve = waiter
+          waiter = undefined
+          resolve(event)
+          return
+        }
+        buffer.push(event)
+      }
+      subscribers.add(subscriber)
       return {
         async *[Symbol.asyncIterator]() {
           for (;;) {
@@ -116,40 +122,53 @@ const sessionOwners = {}
 /** Parent the fake session record reports, keyed by session id. */
 const sessionParents = {}
 
-async function run(events, options = {}) {
+/**
+ * Run one plugin instance per given location, all sharing one event stream,
+ * like OpenCode's per-location plugin instances.
+ */
+async function runAt(directories, events, options = {}) {
   const { omitLocationDirectory, ...pluginOptions } = options
   rmSync(logPath, { force: true })
   const stream = createStream()
   const plugin = (await import(pathToFileURL(join(repoRoot, "dist", "index.js")).href)).default
 
-  const location = {
-    project: { id: PROJECT_ID, directory: repoRoot, canonical: repoRoot },
-  }
-  if (!omitLocationDirectory) location.directory = repoRoot
+  const cleanups = []
+  for (const directory of directories) {
+    const location = {
+      project: { id: PROJECT_ID, directory: repoRoot, canonical: repoRoot },
+    }
+    if (!omitLocationDirectory) location.directory = directory
 
-  const ctx = {
-    options: { wslOnly: false, executablePath: fakeToast, ...pluginOptions },
-    location,
-    event: { subscribe: () => stream.subscribe() },
-    session: {
-      async get({ sessionID }) {
-        const owner = sessionOwners[sessionID]
-        return {
-          id: sessionID,
-          ...(sessionTitles[sessionID] ? { title: sessionTitles[sessionID] } : {}),
-          ...(sessionParents[sessionID] ? { parentID: sessionParents[sessionID] } : {}),
-          projectID: owner?.projectID ?? PROJECT_ID,
-          location: { directory: owner?.directory ?? repoRoot },
-        }
+    const ctx = {
+      options: { wslOnly: false, executablePath: fakeToast, ...pluginOptions },
+      location,
+      event: { subscribe: () => stream.subscribe() },
+      session: {
+        async get({ sessionID }) {
+          const owner = sessionOwners[sessionID]
+          return {
+            id: sessionID,
+            ...(sessionTitles[sessionID] ? { title: sessionTitles[sessionID] } : {}),
+            ...(sessionParents[sessionID] ? { parentID: sessionParents[sessionID] } : {}),
+            projectID: owner?.projectID ?? PROJECT_ID,
+            location: { directory: owner?.directory ?? repoRoot },
+          }
+        },
       },
-    },
+    }
+
+    cleanups.push(await plugin.setup(ctx))
   }
 
-  const cleanup = await plugin.setup(ctx)
   for (const event of events) stream.push(event)
   await settle()
-  if (cleanup) await cleanup()
+  for (const cleanup of cleanups) if (cleanup) await cleanup()
   return toasts()
+}
+
+/** Run a single plugin instance at the repo root. */
+async function run(events, options = {}) {
+  return runAt([repoRoot], events, options)
 }
 
 const started = (sessionID) => ({ type: "session.execution.started", data: { sessionID } })
@@ -301,6 +320,31 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
 
   const local = await run([{ type: "permission.asked", data: { sessionID: "ses_abc", requestID: "perm_4" } }])
   check("local session toasted via record", local.length, 1)
+}
+
+// --- A project with several locations toasts each event exactly once ---
+{
+  // A project can have more than one location (for example a worktree). Each
+  // location runs its own plugin instance and receives the same location-less
+  // notification events, but only the session's own location should toast.
+  const worktree = "/home/cardi/projects_l/opencode-wsl-notify-worktree"
+  sessionOwners.ses_abc = { projectID: PROJECT_ID, directory: repoRoot }
+
+  const result = await runAt([repoRoot, worktree], [
+    started("ses_abc"),
+    succeeded("ses_abc"),
+    { type: "permission.asked", data: { sessionID: "ses_abc", requestID: "perm_multi" } },
+  ])
+  check(
+    "completion toasts once across same-project locations",
+    result.filter((toast) => toast.title === "Session complete").length,
+    1,
+  )
+  check(
+    "permission toasts once across same-project locations",
+    result.filter((toast) => toast.title === "Waiting for permission").length,
+    1,
+  )
 }
 
 // --- Falls back to the project root when ctx.location has no directory ---

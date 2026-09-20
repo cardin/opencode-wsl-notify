@@ -124,11 +124,12 @@ drop a placeholder entirely, remove it from the message:
 3. It subscribes to `ctx.event.subscribe()`.
 4. Matching events map to toasts, which run as a Windows process from WSL.
 
-OpenCode delivers every event to every project's plugin instance, and the plugin
-is loaded once per project. Notification events carry no location field, so the
-plugin resolves each event's owning project from its session and ignores events
-that are not its own. One event therefore produces one toast rather than one per
-open project.
+OpenCode delivers every event to every location's plugin instance, and the
+plugin is loaded once per location (a project can have several, such as a
+worktree). Notification events carry no location field, so the plugin resolves
+each event's owning location from its session and ignores events that are not
+its own. One event therefore produces one toast rather than one per open
+location.
 
 The plugin is deliberately inert outside WSL, since native Linux has a real notification daemon and OpenCode's built-in [`attention`](https://opencode.ai/v2/docs/cli/config) settings cover it. On Windows 11 with WSLg, try the built-in `attention.notifications` setting first — it may already do what you need.
 
@@ -169,9 +170,13 @@ execute bit from WSL. There is no manual permission step.
 A finished turn can surface as more than one event (`session.execution.succeeded`
 and the deprecated `session.idle`), and a reconnecting event stream can replay
 durable events. The plugin coalesces completions per execution, so one finished
-turn produces one toast. Subagent sessions are detected from their session
-record's `parentID`, so they do not toast as top-level sessions while
-`subagent_complete` is disabled.
+turn produces one toast.
+
+Each event is also scoped to the session's own location, so opening the same
+project at more than one location (for example a worktree) does not toast once
+per location. Subagent sessions are detected from their session record's
+`parentID`, so they do not toast as top-level sessions while `subagent_complete`
+is disabled.
 
 Set `debug: true` to log which events are dispatched and which duplicates are
 skipped.

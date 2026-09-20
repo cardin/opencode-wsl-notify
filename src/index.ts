@@ -158,10 +158,15 @@ export default {
     /** A session with a parent is a subagent, even when the event omits it. */
     const isSubagentSession = (session: string): boolean => sessionMeta.get(session)?.parentID !== undefined
 
-    // OpenCode broadcasts every location's events to every project's plugin
-    // instance, so this project must ignore events that belong to another. An
+    // OpenCode broadcasts every location's events to every location's plugin
+    // instance, so this instance must ignore events that belong to another. An
     // event envelope's location wins when present; notification events carry
-    // none, so fall back to the session record, which names its own project.
+    // none, so fall back to the session record, which names its own location.
+    //
+    // Compare the session's location directory before the project id: a project
+    // can have several locations (for example a worktree), and they all share
+    // one project id. Matching on the project id alone would let every location
+    // toast the same event.
     const ownsEvent = async (event: unknown, session?: string): Promise<boolean> => {
       // Warm the metadata cache so subagent/title info is available either way.
       if (session) await readSession(session)
@@ -170,11 +175,11 @@ export default {
 
       if (session) {
         const meta = sessionMeta.get(session) ?? {}
-        if (ourProjectID !== undefined && meta.projectID !== undefined) {
-          return meta.projectID === ourProjectID
-        }
         if (ourDirectory !== undefined && meta.directory !== undefined) {
           return meta.directory === ourDirectory
+        }
+        if (ourProjectID !== undefined && meta.projectID !== undefined) {
+          return meta.projectID === ourProjectID
         }
       }
       return true
