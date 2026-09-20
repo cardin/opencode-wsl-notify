@@ -190,7 +190,7 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
   check(
     "readable project and session",
     result[0]?.message,
-    `${PROJECT_NAME} — Fix the parser`,
+    `${PROJECT_NAME}\nFix the parser`,
   )
   console.log(`        toast: ${JSON.stringify(result[0])}`)
 }
@@ -202,7 +202,7 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
   check(
     "late title rendered",
     result[0]?.message,
-    `${PROJECT_NAME} — Title generated later`,
+    `${PROJECT_NAME}\nTitle generated later`,
   )
 }
 
@@ -260,7 +260,7 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
   const result = await run([{ type: "permission.asked", data: { sessionID: "ses_abc", requestID: "perm_1" } }])
   check("permission toasts", result.length, 1)
   check("permission title", result[0]?.title, "Waiting for permission")
-  check("permission message names session", result[0]?.message, `${PROJECT_NAME} — Fix the parser`)
+  check("permission message names session", result[0]?.message, `${PROJECT_NAME}\nFix the parser`)
 }
 
 // --- Events for another project do not toast (one plugin instance per project) ---

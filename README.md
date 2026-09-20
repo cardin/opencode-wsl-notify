@@ -91,9 +91,9 @@ The toast title names the event; the body carries the project and session:
 
 | Event | Title | Message |
 | --- | --- | --- |
-| `complete` | `Session complete` | `{project} — {session}` |
-| `error` | `Session error` | `{project} — {session}` |
-| `permission` | `Waiting for permission` | `{project} — {session}` |
+| `complete` | `Session complete` | `{project}\n{session}` |
+| `error` | `Session error` | `{project}\n{session}` |
+| `permission` | `Waiting for permission` | `{project}\n{session}` |
 | `subagent_complete` | `Subagent finished` | `{project}` |
 
 ### Message placeholders
@@ -107,9 +107,13 @@ Titles are captured from `session.created` and `session.renamed`, and refreshed
 from the session record when a notification fires, so a toast names the session
 even when the title is generated after the plugin subscribes.
 
-Placeholders that resolve to empty are removed along with their trailing
-separator, so `"{project} — {session}"` degrades cleanly to just the project. To
-drop a placeholder entirely, remove it from the message:
+Messages may contain `\n` for a line break in the toast body; the default puts
+the project and session on separate lines.
+
+Placeholders that resolve to empty are removed along with their adjacent
+separator, so the default `"{project}\n{session}"` degrades cleanly to just the
+project, or just the session when the project is unknown. To drop a placeholder
+entirely, remove it from the message:
 
 ```jsonc
 { "events": { "complete": { "message": "{project}" } } }

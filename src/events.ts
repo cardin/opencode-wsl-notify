@@ -30,17 +30,17 @@ export const defaultRules: EventRules = {
   complete: {
     enabled: true,
     title: "Session complete",
-    message: "{project} — {session}",
+    message: "{project}\n{session}",
   },
   error: {
     enabled: true,
     title: "Session error",
-    message: "{project} — {session}",
+    message: "{project}\n{session}",
   },
   permission: {
     enabled: true,
     title: "Waiting for permission",
-    message: "{project} — {session}",
+    message: "{project}\n{session}",
   },
   subagent_complete: {
     enabled: false,
@@ -280,7 +280,12 @@ export interface RenderContext {
   session?: string
 }
 
-/** Fill `{project}` / `{session}` placeholders, dropping empty trailing separators. */
+/**
+ * Fill `{project}` / `{session}` placeholders, dropping empty trailing separators.
+ *
+ * Newlines between placeholders survive, so a message like `"{project}\n{session}"`
+ * renders as two lines and collapses to one when either side is missing.
+ */
 export function renderMessage(template: string, context: RenderContext): string {
   const rendered = template
     .replaceAll("{project}", context.project ?? "")

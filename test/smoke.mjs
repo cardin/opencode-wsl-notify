@@ -105,14 +105,15 @@ check("complete title", defaultRules.complete.title, "Session complete")
 check("error title", defaultRules.error.title, "Session error")
 check("permission title", defaultRules.permission.title, "Waiting for permission")
 check("subagent title", defaultRules.subagent_complete.title, "Subagent finished")
-check("permission message names session", defaultRules.permission.message, "{project} — {session}")
+check("permission message separates project and session", defaultRules.permission.message, "{project}\n{session}")
 check("subagent message omits session", defaultRules.subagent_complete.message, "{project}")
 check("subagent disabled by default", defaultRules.subagent_complete.enabled, false)
 
 // --- Rendering / placeholder cleanup ---
-check("project + session placeholders", renderMessage(defaultRules.complete.message, { project: "myapp", session: "Fix login" }), "myapp — Fix login")
+check("project + session placeholders", renderMessage(defaultRules.complete.message, { project: "myapp", session: "Fix login" }), "myapp\nFix login")
 check("empty placeholders render empty", renderMessage(defaultRules.complete.message, {}), "")
 check("only project present", renderMessage(defaultRules.complete.message, { project: "myapp" }), "myapp")
+check("only session present", renderMessage(defaultRules.complete.message, { session: "Fix login" }), "Fix login")
 check("empty session trims dash", renderMessage("Done - {session}", {}), "Done")
 
 // --- Runtime self-healing of the execute bit ---
