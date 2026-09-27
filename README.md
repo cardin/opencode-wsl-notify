@@ -96,6 +96,10 @@ The toast title names the event; the body carries the project and session:
 | `permission` | `Waiting for permission` | `{project}\n{session}` |
 | `subagent_complete` | `Subagent finished` | `{project}` |
 
+Permission notifications are sent once per request: OpenCode can re-emit
+`permission.asked` for the same prompt, and the plugin coalesces those into a
+single toast.
+
 ### Message placeholders
 
 | Placeholder | Resolves to |

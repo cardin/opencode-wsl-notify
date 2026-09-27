@@ -263,6 +263,45 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
   check("permission message names session", result[0]?.message, `${PROJECT_NAME}\nFix the parser`)
 }
 
+// --- Re-emitted permission requests coalesce to one toast ---
+{
+  const asked = (id) => ({ type: "permission.asked", data: { sessionID: "ses_abc", id } })
+
+  // OpenCode re-emits `permission.asked` for the same request; the toast must not.
+  const replayed = await run([asked("perm_dup"), asked("perm_dup"), asked("perm_dup")])
+  check(
+    "re-emitted permission toasts once",
+    replayed.filter((toast) => toast.title === "Waiting for permission").length,
+    1,
+  )
+
+  // Distinct requests each get their own notification.
+  const distinct = await run([asked("perm_a"), asked("perm_b")])
+  check(
+    "distinct permissions each toast",
+    distinct.filter((toast) => toast.title === "Waiting for permission").length,
+    2,
+  )
+
+  // A reply frees the id, so the same request can notify again if re-asked.
+  const reasked = await run([
+    asked("perm_r"),
+    { type: "permission.replied", data: { sessionID: "ses_abc", requestID: "perm_r", reply: "once" } },
+    asked("perm_r"),
+  ])
+  check(
+    "re-asked permission after reply toasts again",
+    reasked.filter((toast) => toast.title === "Waiting for permission").length,
+    2,
+  )
+
+  // A reply on its own never toasts.
+  const replied = await run([
+    { type: "permission.replied", data: { sessionID: "ses_abc", requestID: "perm_solo", reply: "reject" } },
+  ])
+  check("permission reply does not toast", replied.length, 0)
+}
+
 // --- Events for another project do not toast (one plugin instance per project) ---
 {
   const event = {

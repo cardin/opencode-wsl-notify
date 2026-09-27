@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules, projectLabel, sessionLabel, sessionParentOf, sessionProjectOf, sessionLocationOf, beginTurn, claimCompletion, eventLocationOf, matchesLocation } from "../dist/events.js"
+import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules, projectLabel, sessionLabel, sessionParentOf, sessionProjectOf, sessionLocationOf, beginTurn, claimCompletion, claimPermission, forgetPermission, permissionIDOf, permissionReplyIDOf, eventLocationOf, matchesLocation } from "../dist/events.js"
 import { resolveBinary, toWindowsPath, isWSL } from "../dist/toast.js"
 
 let failed = 0
@@ -33,6 +33,8 @@ check("execution.failed", classifyEvent({ type: "session.execution.failed", data
   { role: "notify", kind: "error" })
 check("permission.asked", classifyEvent({ type: "permission.asked", data: { sessionID: "s1", requestID: "p1" } }),
   { role: "notify", kind: "permission" })
+check("permission.replied clears state", classifyEvent({ type: "permission.replied", data: { sessionID: "s1", requestID: "p1", reply: "once" } }),
+  { role: "clear", kind: "permission" })
 check("subagent idle -> subagent_complete",
   classifyEvent({ type: "session.idle", data: { sessionID: "child", parentID: "parent" } }),
   { role: "notify", kind: "subagent_complete" })
@@ -92,6 +94,25 @@ check("unknown plugin location allows all", matchesLocation({ type: "session.idl
 
   // Sessions are independent.
   check("other session unaffected", claimCompletion(turns, "s3"), { claimed: true, startedAt: undefined })
+}
+
+// --- Permission request ids (event payloads; `id` is the current field) ---
+check("permission id read", permissionIDOf({ type: "permission.asked", data: { sessionID: "s1", id: "p1" } }), "p1")
+check("permission id legacy requestID", permissionIDOf({ type: "permission.asked", data: { sessionID: "s1", requestID: "p2" } }), "p2")
+check("permission id absent", permissionIDOf({ type: "permission.asked", data: { sessionID: "s1" } }), undefined)
+check("permission id only on ask", permissionIDOf({ type: "session.idle", data: { id: "p1" } }), undefined)
+check("permission reply id read", permissionReplyIDOf({ type: "permission.replied", data: { sessionID: "s1", requestID: "p1" } }), "p1")
+check("permission reply id only on reply", permissionReplyIDOf({ type: "permission.asked", data: { sessionID: "s1", id: "p1" } }), undefined)
+
+// --- Permission coalescing (one toast per request; re-emits are ignored) ---
+{
+  const notified = new Set()
+  check("first permission claimed", claimPermission(notified, "p1"), true)
+  check("re-emitted permission coalesced", claimPermission(notified, "p1"), false)
+  check("distinct permission claimed", claimPermission(notified, "p2"), true)
+  check("id-less permission still notifies", claimPermission(notified, undefined), true)
+  forgetPermission(notified, "p1")
+  check("replied permission can notify again", claimPermission(notified, "p1"), true)
 }
 
 check("session label prefers title", sessionLabel("Fix login", "ses_f4c8aaaa"), "Fix login")

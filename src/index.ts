@@ -13,10 +13,14 @@ import {
   announcesTitle,
   beginTurn,
   claimCompletion,
+  claimPermission,
   classifyEvent,
   defaultRules,
   eventLocationOf,
+  forgetPermission,
   matchesLocation,
+  permissionIDOf,
+  permissionReplyIDOf,
   projectLabel,
   renderMessage,
   sessionIDOf,
@@ -132,6 +136,11 @@ export default {
     // deprecated `session.idle`, and a reconnecting event stream can replay
     // durable events, so coalesce completions to one toast per execution.
     const turns = new Map<string, TurnState>()
+
+    // One toast per permission request. OpenCode re-emits `permission.asked`
+    // for the same request (its built-in attention handler and the TUI both
+    // dedupe on the request id), so without this the toast repeats.
+    const permissions = new Set<string>()
 
     // Read the full session record once per session. Titles can lag behind
     // execution, the record names the owning project/location (notification
@@ -251,6 +260,13 @@ export default {
             continue
           }
 
+          if (classified.role === "clear") {
+            // A resolved permission frees its request id so a fresh ask with the
+            // same id can notify again.
+            forgetPermission(permissions, permissionReplyIDOf(event))
+            continue
+          }
+
           // Only this project's events become toasts. Notification events carry
           // no location, so this resolves the session's owner instead.
           if (!(await ownsEvent(event, session))) {
@@ -283,6 +299,14 @@ export default {
             }
           }
 
+          if (kind === "permission") {
+            const permission = permissionIDOf(event)
+            if (!claimPermission(permissions, permission)) {
+              log("Skipping duplicate permission", { session, permission })
+              continue
+            }
+          }
+
           log("Dispatching notification", { kind, session })
           await fire(kind, session)
         }
@@ -302,10 +326,14 @@ export {
   announcesTitle,
   beginTurn,
   claimCompletion,
+  claimPermission,
   classifyEvent,
   defaultRules,
   eventLocationOf,
+  forgetPermission,
   matchesLocation,
+  permissionIDOf,
+  permissionReplyIDOf,
   projectLabel,
   renderMessage,
   sessionIDOf,

@@ -59,6 +59,7 @@ const SESSION_ERROR = "session.error"
 const SESSION_RENAMED = "session.renamed"
 const SESSION_CREATED = "session.created"
 const PERMISSION_ASKED = "permission.asked"
+const PERMISSION_REPLIED = "permission.replied"
 
 interface EventLike {
   type?: unknown
@@ -154,6 +155,23 @@ export function matchesLocation(event: unknown, directory?: string): boolean {
   return eventDirectory === undefined || eventDirectory === directory
 }
 
+/** Permission request id carried by `permission.asked` (`id`, legacy `requestID`). */
+export function permissionIDOf(event: unknown): string | undefined {
+  const record = readEvent(event)
+  if (!record || record.type !== PERMISSION_ASKED) return undefined
+  const data = payload(record)
+  const id = data.id ?? data.requestID
+  return typeof id === "string" && id !== "" ? id : undefined
+}
+
+/** Permission request resolved by `permission.replied`. */
+export function permissionReplyIDOf(event: unknown): string | undefined {
+  const record = readEvent(event)
+  if (!record || record.type !== PERMISSION_REPLIED) return undefined
+  const id = payload(record).requestID
+  return typeof id === "string" && id !== "" ? id : undefined
+}
+
 /** A subagent session reports a parent that differs from its own id. */
 function isSubagent(event: EventLike): boolean {
   const data = payload(event)
@@ -163,7 +181,7 @@ function isSubagent(event: EventLike): boolean {
   return typeof self !== "string" || parent !== self
 }
 
-export type EventRole = "start" | "notify"
+export type EventRole = "start" | "notify" | "clear"
 
 export interface Classified {
   role: EventRole
@@ -199,6 +217,9 @@ export function classifyEvent(event: unknown): Classified | undefined {
 
     case PERMISSION_ASKED:
       return { role: "notify", kind: "permission" }
+
+    case PERMISSION_REPLIED:
+      return { role: "clear", kind: "permission" }
 
     default:
       return undefined
@@ -273,6 +294,26 @@ export function claimCompletion(
 
   turns.set(key, { startedAt: turn?.startedAt, notified: true })
   return { claimed: true, startedAt: turn?.startedAt }
+}
+
+/**
+ * Claim the notification for a permission request.
+ *
+ * OpenCode re-emits `permission.asked` for the same request, so firing on every
+ * event would toast repeatedly for one prompt. Its built-in attention handler
+ * dedupes on the request id; this does the same. A request without an id still
+ * notifies, since it cannot be coalesced.
+ */
+export function claimPermission(notified: Set<string>, key: string | undefined): boolean {
+  if (!key) return true
+  if (notified.has(key)) return false
+  notified.add(key)
+  return true
+}
+
+/** Forget a resolved permission, so a fresh request with that id can notify again. */
+export function forgetPermission(notified: Set<string>, key: string | undefined): void {
+  if (key) notified.delete(key)
 }
 
 export interface RenderContext {
