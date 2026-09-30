@@ -1,5 +1,24 @@
 # opencode-wsl-notify
 
+> **Deprecated.** Please switch to [@mohak34/opencode-notifier](https://github.com/mohak34/opencode-notifier). It supports OpenCode V2 and multiple platforms (macOS, Linux, and Windows), so this WSL-only plugin is no longer recommended for new installs. Existing installs continue to work; this package is not being removed.
+
+## Migrate to opencode-notifier
+
+Replace `opencode-wsl-notify` with `@mohak34/opencode-notifier` in the `plugins` list of your OpenCode V2 config (usually `~/.config/opencode/opencode.jsonc`):
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["@mohak34/opencode-notifier@latest"]
+}
+```
+
+Remove any `opencode-wsl-notify` options; the replacement has [its own configuration](https://github.com/mohak34/opencode-notifier#config-file). Restart OpenCode. Avoid running both plugins at once or you may receive duplicate notifications.
+
+The remaining documentation is for existing users of this deprecated plugin.
+
+---
+
 Windows toast notifications for [OpenCode](https://opencode.ai) (V2) running inside **WSL** — with **no Windows-side setup**.
 
 No PowerShell modules to install. No BurntToast. No scripts on the Windows side. Just an npm install.
@@ -20,7 +39,7 @@ It is built against the **OpenCode V2 plugin API** (`@opencode/plugin`), not the
 
 ---
 
-## Install
+## Legacy install (not recommended)
 
 Just add it to your OpenCode config — no `npm install` needed. OpenCode installs
 npm plugins itself:
@@ -34,6 +53,8 @@ npm plugins itself:
 
 Restart OpenCode. You should get Windows toasts when a session finishes, errors,
 or needs permission.
+
+Newer releases also show a one-time deprecation notice in the OpenCode V2 TUI. Pinned older versions and non-TUI clients will not show this notice.
 
 <Note>
 OpenCode installs npm plugins with Bun, which blocks `postinstall` lifecycle

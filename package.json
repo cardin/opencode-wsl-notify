@@ -1,7 +1,7 @@
 {
   "name": "opencode-wsl-notify",
   "version": "0.2.0",
-  "description": "Windows toast notifications for OpenCode (V2) running inside WSL. No Windows-side setup required.",
+  "description": "Deprecated: use @mohak34/opencode-notifier for cross-platform OpenCode V2 notifications.",
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,6 +9,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
     }
   },
   "files": [
@@ -20,7 +24,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node test/smoke.mjs",
+    "test": "npm run build && node test/smoke.mjs && node test/tui.mjs",
     "verify": "npm run build && node test/verify.mjs",
     "prepublishOnly": "npm run build"
   },
