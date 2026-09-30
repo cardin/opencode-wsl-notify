@@ -1,6 +1,6 @@
 {
   "name": "opencode-wsl-notify",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Deprecated: use @mohak34/opencode-notifier for cross-platform OpenCode V2 notifications.",
   "type": "module",
   "main": "./dist/index.js",
