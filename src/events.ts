@@ -297,23 +297,80 @@ export function claimCompletion(
 }
 
 /**
- * Claim the notification for a permission request.
+ * Permission-request bookkeeping.
  *
- * OpenCode re-emits `permission.asked` for the same request, so firing on every
- * event would toast repeatedly for one prompt. Its built-in attention handler
- * dedupes on the request id; this does the same. A request without an id still
- * notifies, since it cannot be coalesced.
+ * OpenCode re-emits `permission.asked` for the same request, and an auto-accepted
+ * request (the TUI's `session.permissions: "autoaccept"`) is answered almost
+ * instantly while still emitting the ask. Firing on the ask alone would therefore
+ * repeat for one prompt and announce permissions nothing is waiting on. So a
+ * request is held for a grace window and only toasted if it is still pending when
+ * the window elapses.
  */
-export function claimPermission(notified: Set<string>, key: string | undefined): boolean {
-  if (!key) return true
-  if (notified.has(key)) return false
-  notified.add(key)
-  return true
+export interface PermissionGate {
+  /** Requests waiting out the grace window. */
+  pending: Set<string>
+  /** Requests whose toast has already been produced. */
+  notified: Set<string>
+  /** Answered requests, mapped to the time until which late re-emits are ignored. */
+  answered: Map<string, number>
 }
 
-/** Forget a resolved permission, so a fresh request with that id can notify again. */
-export function forgetPermission(notified: Set<string>, key: string | undefined): void {
-  if (key) notified.delete(key)
+export type PermissionDecision = "defer" | "immediate" | "skip"
+
+/**
+ * Decide what to do with a `permission.asked`.
+ *
+ * A request without an id cannot be coalesced, so it is notified immediately.
+ * Otherwise it is deferred: the caller waits out the grace window and notifies
+ * only if `resolvePermission` has not cancelled it. Re-emits of a request that is
+ * already pending, already notified, or was just answered are skipped.
+ */
+export function beginPermission(
+  gate: PermissionGate,
+  key: string | undefined,
+  now: number = Date.now(),
+): PermissionDecision {
+  if (!key) return "immediate"
+
+  const until = gate.answered.get(key)
+  if (until !== undefined) {
+    if (now < until) return "skip"
+    gate.answered.delete(key)
+  }
+
+  if (gate.notified.has(key) || gate.pending.has(key)) return "skip"
+
+  gate.pending.add(key)
+  return "defer"
+}
+
+/** Mark a deferred permission request as toasted, so later re-emits are skipped. */
+export function markPermissionNotified(gate: PermissionGate, key: string | undefined): void {
+  if (!key) return
+  gate.pending.delete(key)
+  gate.notified.add(key)
+}
+
+/**
+ * Record that a permission request was answered.
+ *
+ * Returns `true` when the request was still waiting out the grace window, so the
+ * caller can cancel the pending toast. A short suppression window afterwards
+ * swallows late re-emits of the answered request, and the id is freed so a fresh
+ * request with the same id can notify again.
+ */
+export function resolvePermission(
+  gate: PermissionGate,
+  key: string | undefined,
+  now: number = Date.now(),
+  suppressMs = 0,
+): boolean {
+  if (!key) return false
+
+  const wasPending = gate.pending.delete(key)
+  gate.notified.delete(key)
+  if (wasPending) gate.answered.set(key, now + Math.max(0, suppressMs))
+  return wasPending
 }
 
 export interface RenderContext {

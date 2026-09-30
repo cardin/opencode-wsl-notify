@@ -95,16 +95,20 @@ function createStream() {
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
-/** Wait until no new toasts have appeared for a short quiet period. */
+/** The plugin's default permission grace window, used to floor the settle time. */
+const PERMISSION_GRACE_MS = 500
+
+/**
+ * Wait until no new toasts have appeared, and at least the permission grace
+ * window has elapsed so a deferred permission toast has had time to land.
+ */
 async function settle(maxMs = 3000) {
+  const floor = PERMISSION_GRACE_MS + 250
   const start = Date.now()
   let last = -1
   while (Date.now() - start < maxMs) {
     const count = toasts().length
-    if (count === last) {
-      await wait(150)
-      if (toasts().length === count) return
-    }
+    if (count === last && Date.now() - start >= floor) return
     last = count
     await wait(100)
   }
@@ -283,12 +287,16 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
     2,
   )
 
-  // A reply frees the id, so the same request can notify again if re-asked.
-  const reasked = await run([
-    asked("perm_r"),
-    { type: "permission.replied", data: { sessionID: "ses_abc", requestID: "perm_r", reply: "once" } },
-    asked("perm_r"),
-  ])
+  // With the grace window disabled, a reply frees the id immediately, so the
+  // same request can notify again if it is re-asked.
+  const reasked = await run(
+    [
+      asked("perm_r"),
+      { type: "permission.replied", data: { sessionID: "ses_abc", requestID: "perm_r", reply: "once" } },
+      asked("perm_r"),
+    ],
+    { permissionGraceMs: 0 },
+  )
   check(
     "re-asked permission after reply toasts again",
     reasked.filter((toast) => toast.title === "Waiting for permission").length,
@@ -300,6 +308,42 @@ const created = (sessionID, extra = {}) => ({ type: "session.created", data: { s
     { type: "permission.replied", data: { sessionID: "ses_abc", requestID: "perm_solo", reply: "reject" } },
   ])
   check("permission reply does not toast", replied.length, 0)
+}
+
+// --- Auto-answered permission requests are suppressed ---
+{
+  const asked = (id) => ({ type: "permission.asked", data: { sessionID: "ses_abc", id } })
+  const replied = (id) => ({
+    type: "permission.replied",
+    data: { sessionID: "ses_abc", requestID: id, reply: "once" },
+  })
+  const permissionToasts = (toasts) => toasts.filter((toast) => toast.title === "Waiting for permission")
+
+  // An auto-accepted request (the TUI's `session.permissions: "autoaccept"`) is
+  // answered the moment it appears; the plugin must not announce it.
+  const auto = await run([asked("perm_auto"), replied("perm_auto")])
+  check("auto-answered permission suppressed", permissionToasts(auto).length, 0)
+
+  // A request that is never answered is still announced, exactly once.
+  const waiting = await run([asked("perm_wait")])
+  check("unanswered permission still toasts", permissionToasts(waiting).length, 1)
+
+  // A late re-emit of an already answered request is swallowed too.
+  const reemit = await run([asked("perm_auto2"), replied("perm_auto2"), asked("perm_auto2")])
+  check("re-emit after reply suppressed", permissionToasts(reemit).length, 0)
+
+  // Duplicate asks while still pending coalesce to one toast.
+  const duplicate = await run([asked("perm_dup2"), asked("perm_dup2")])
+  check("duplicate pending ask toasts once", permissionToasts(duplicate).length, 1)
+
+  // A shorter custom window is honoured.
+  const custom = await run([asked("perm_custom")], { permissionGraceMs: 50 })
+  check("custom grace still toasts unanswered", permissionToasts(custom).length, 1)
+  check("custom grace title", custom[0]?.title, "Waiting for permission")
+
+  // Disabling the grace window restores immediate notifications.
+  const immediate = await run([asked("perm_now")], { permissionGraceMs: 0 })
+  check("grace 0 notifies immediately", permissionToasts(immediate).length, 1)
 }
 
 // --- Events for another project do not toast (one plugin instance per project) ---

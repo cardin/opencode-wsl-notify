@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs"
-import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules, projectLabel, sessionLabel, sessionParentOf, sessionProjectOf, sessionLocationOf, beginTurn, claimCompletion, claimPermission, forgetPermission, permissionIDOf, permissionReplyIDOf, eventLocationOf, matchesLocation } from "../dist/events.js"
+import { classifyEvent, sessionIDOf, sessionTitleOf, announcesTitle, renderMessage, defaultRules, projectLabel, sessionLabel, sessionParentOf, sessionProjectOf, sessionLocationOf, beginTurn, claimCompletion, beginPermission, markPermissionNotified, resolvePermission, permissionIDOf, permissionReplyIDOf, eventLocationOf, matchesLocation } from "../dist/events.js"
 import { resolveBinary, toWindowsPath, isWSL } from "../dist/toast.js"
 
 let failed = 0
@@ -104,15 +104,38 @@ check("permission id only on ask", permissionIDOf({ type: "session.idle", data: 
 check("permission reply id read", permissionReplyIDOf({ type: "permission.replied", data: { sessionID: "s1", requestID: "p1" } }), "p1")
 check("permission reply id only on reply", permissionReplyIDOf({ type: "permission.asked", data: { sessionID: "s1", id: "p1" } }), undefined)
 
-// --- Permission coalescing (one toast per request; re-emits are ignored) ---
+// --- Permission gate (deferred toasts, likely duplicate handling) ---
 {
-  const notified = new Set()
-  check("first permission claimed", claimPermission(notified, "p1"), true)
-  check("re-emitted permission coalesced", claimPermission(notified, "p1"), false)
-  check("distinct permission claimed", claimPermission(notified, "p2"), true)
-  check("id-less permission still notifies", claimPermission(notified, undefined), true)
-  forgetPermission(notified, "p1")
-  check("replied permission can notify again", claimPermission(notified, "p1"), true)
+  const gate = () => ({ pending: new Set(), notified: new Set(), answered: new Map() })
+
+  const g1 = gate()
+  check("first permission deferred", beginPermission(g1, "p1", 1000), "defer")
+  check("re-emitted permission while pending skipped", beginPermission(g1, "p1", 1000), "skip")
+  check("id-less permission immediate", beginPermission(g1, undefined, 1000), "immediate")
+
+  // Once the grace window elapses unanswered, the request is toasted and freed.
+  markPermissionNotified(g1, "p1")
+  check("notified permission skipped", beginPermission(g1, "p1", 1000), "skip")
+  check("distinct permission deferred", beginPermission(g1, "p2", 1000), "defer")
+
+  // Answered before the grace window elapses: the pending toast is cancelled,
+  // and a late re-emit is swallowed until the suppression window expires.
+  const g2 = gate()
+  beginPermission(g2, "perm_auto", 1000)
+  check("answered pending request reports cancellation", resolvePermission(g2, "perm_auto", 1050, 500), true)
+  check("auto-answered request suppressed", beginPermission(g2, "perm_auto", 1100), "skip")
+  check("suppression expires", beginPermission(g2, "perm_auto", 1600), "defer")
+
+  // A reply after the toast already fired cancels nothing, but frees the id.
+  const g3 = gate()
+  beginPermission(g3, "perm_late", 1000)
+  markPermissionNotified(g3, "perm_late")
+  check("answered after notify reports no cancellation", resolvePermission(g3, "perm_late", 1050, 500), false)
+  check("freed id can notify again", beginPermission(g3, "perm_late", 1060), "defer")
+
+  // Replying to a request we never saw, or without an id, is harmless.
+  check("unknown reply ignored", resolvePermission(g3, "perm_unknown", 1000, 500), false)
+  check("id-less reply ignored", resolvePermission(g3, undefined, 1000, 500), false)
 }
 
 check("session label prefers title", sessionLabel("Fix login", "ses_f4c8aaaa"), "Fix login")

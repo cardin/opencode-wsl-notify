@@ -11,18 +11,19 @@ type OpenCodePlugin = OpenCodePluginNamespace.Plugin
 
 import {
   announcesTitle,
+  beginPermission,
   beginTurn,
   claimCompletion,
-  claimPermission,
   classifyEvent,
   defaultRules,
   eventLocationOf,
-  forgetPermission,
+  markPermissionNotified,
   matchesLocation,
   permissionIDOf,
   permissionReplyIDOf,
   projectLabel,
   renderMessage,
+  resolvePermission,
   sessionIDOf,
   sessionLabel,
   sessionLocationOf,
@@ -31,6 +32,7 @@ import {
   sessionTitleOf,
   type EventKind,
   type EventRules,
+  type PermissionGate,
   type TurnState,
 } from "./events.js"
 import { createNotifier, isWSL } from "./toast.js"
@@ -46,11 +48,19 @@ export interface PluginOptions {
   events?: Partial<Record<EventKind, Partial<EventRules[EventKind]>>>
   /** Suppress `complete` notifications for sessions shorter than this (seconds). */
   minDuration?: number
+  /**
+   * How long (milliseconds) to wait for `permission.replied` before showing a
+   * permission toast. Requests answered within this window — including ones the
+   * TUI accepts automatically (`session.permissions: "autoaccept"`) — are
+   * suppressed. `0` notifies immediately. Defaults to 500.
+   */
+  permissionGraceMs?: number
   /** Log diagnostics to stderr. Defaults to false. */
   debug?: boolean
 }
 
 const DEFAULT_APP_ID = "OpenCode"
+const DEFAULT_PERMISSION_GRACE_MS = 500
 
 function mergeRules(overrides: PluginOptions["events"]): EventRules {
   const rules: EventRules = structuredClone(defaultRules)
@@ -137,10 +147,22 @@ export default {
     // durable events, so coalesce completions to one toast per execution.
     const turns = new Map<string, TurnState>()
 
-    // One toast per permission request. OpenCode re-emits `permission.asked`
-    // for the same request (its built-in attention handler and the TUI both
-    // dedupe on the request id), so without this the toast repeats.
-    const permissions = new Set<string>()
+    // One toast per permission request, and only when the request is actually
+    // still waiting. OpenCode re-emits `permission.asked` for the same request,
+    // and an auto-accepted request (the TUI's `session.permissions: "autoaccept"`)
+    // is answered almost instantly while still emitting the ask. So a request is
+    // held for `permissionGraceMs` and dropped if `permission.replied` arrives
+    // first, which is how auto-answered requests go unannounced.
+    const permissions: PermissionGate = {
+      pending: new Set(),
+      notified: new Set(),
+      answered: new Map(),
+    }
+    const permissionTimers = new Map<string, ReturnType<typeof setTimeout>>()
+    const permissionGraceMs =
+      typeof options.permissionGraceMs === "number" && Number.isFinite(options.permissionGraceMs)
+        ? Math.max(0, options.permissionGraceMs)
+        : DEFAULT_PERMISSION_GRACE_MS
 
     // Read the full session record once per session. Titles can lag behind
     // execution, the record names the owning project/location (notification
@@ -218,6 +240,15 @@ export default {
       }
     }
 
+    // Fire a permission toast outside the event loop, so a deferred request does
+    // not hold up later events (notably the `permission.replied` that cancels it).
+    const notifyPermission = (session?: string) => {
+      log("Dispatching notification", { kind: "permission", session })
+      void fire("permission", session).catch((error) => {
+        log("Notification failed", { kind: "permission", error: String(error) })
+      })
+    }
+
     const controller = new AbortController()
 
     void (async () => {
@@ -262,8 +293,17 @@ export default {
 
           if (classified.role === "clear") {
             // A resolved permission frees its request id so a fresh ask with the
-            // same id can notify again.
-            forgetPermission(permissions, permissionReplyIDOf(event))
+            // same id can notify again, and cancels a deferred toast when the
+            // request was answered before the grace window elapsed.
+            const reply = permissionReplyIDOf(event)
+            const timer = reply ? permissionTimers.get(reply) : undefined
+            if (timer !== undefined) {
+              clearTimeout(timer)
+              permissionTimers.delete(reply as string)
+            }
+            if (resolvePermission(permissions, reply, Date.now(), permissionGraceMs)) {
+              log("Permission answered before notify; suppressed", { session, request: reply })
+            }
             continue
           }
 
@@ -301,10 +341,32 @@ export default {
 
           if (kind === "permission") {
             const permission = permissionIDOf(event)
-            if (!claimPermission(permissions, permission)) {
+            const decision = beginPermission(permissions, permission)
+
+            if (decision === "skip") {
               log("Skipping duplicate permission", { session, permission })
               continue
             }
+
+            if (decision === "immediate" || permissionGraceMs === 0) {
+              markPermissionNotified(permissions, permission)
+              log("Dispatching notification", { kind, session })
+              await fire(kind, session)
+              continue
+            }
+
+            // Deferred: notify only if the request is still pending once the
+            // grace window elapses. An auto-accepted request is answered well
+            // before then, so its timer is cancelled in the `clear` branch.
+            const key = permission as string
+            const timer = setTimeout(() => {
+              permissionTimers.delete(key)
+              if (!permissions.pending.has(key)) return
+              markPermissionNotified(permissions, key)
+              notifyPermission(session)
+            }, permissionGraceMs)
+            permissionTimers.set(key, timer)
+            continue
           }
 
           log("Dispatching notification", { kind, session })
@@ -317,25 +379,30 @@ export default {
       }
     })()
 
-    return () => controller.abort()
+    return () => {
+      controller.abort()
+      for (const timer of permissionTimers.values()) clearTimeout(timer)
+      permissionTimers.clear()
+    }
   },
 } satisfies OpenCodePlugin
 
 export { createNotifier, isWSL, resolveBinary, toWindowsPath } from "./toast.js"
 export {
   announcesTitle,
+  beginPermission,
   beginTurn,
   claimCompletion,
-  claimPermission,
   classifyEvent,
   defaultRules,
   eventLocationOf,
-  forgetPermission,
+  markPermissionNotified,
   matchesLocation,
   permissionIDOf,
   permissionReplyIDOf,
   projectLabel,
   renderMessage,
+  resolvePermission,
   sessionIDOf,
   sessionLabel,
   sessionLocationOf,
@@ -343,4 +410,13 @@ export {
   sessionProjectOf,
   sessionTitleOf,
 } from "./events.js"
-export type { EventKind, EventRules, EventRule, Classified, ProjectLike, TurnState } from "./events.js"
+export type {
+  EventKind,
+  EventRules,
+  EventRule,
+  Classified,
+  PermissionDecision,
+  PermissionGate,
+  ProjectLike,
+  TurnState,
+} from "./events.js"
